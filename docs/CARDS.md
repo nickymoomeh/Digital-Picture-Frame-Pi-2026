@@ -117,3 +117,44 @@ avoid photo captions and Ken Burns movement to keep text readable, and use a
 fade regardless of the photo transition selection. Existing clock and user
 overlays remain available. Hardware rendering must still be verified on a Pi;
 unit tests substitute textures on systems without EGL/DRM.
+
+## Optional strict card sequence
+
+Set locally (not through remote settings), after installing the sequence patch:
+
+```yaml
+slideshow:
+  card_directory: /home/pi4/FrameCards
+  card_every: 8
+  card_consecutive: false
+  card_sequence: [weather, recipe]
+  interval: 20
+```
+
+An empty `card_sequence` keeps the existing FIFO policy. A configured sequence
+accepts only its named types and requires `card_consecutive: false`. It selects
+only the next type at an eligible natural boundary, then advances the turn
+once that card has been decoded and accepted by the renderer. Wrong-type
+pending entries wait, even if their producer refreshes them repeatedly. A
+missing or invalid required type leaves photographs running while waiting;
+strict alternation does not silently substitute another weather card.
+
+The next turn and last-shown path per type are persisted in existing library
+metadata under `information_card_sequence_v1`. Normal restarts preserve the
+turn while clearing the existing memory-only pending queue. The state object's
+`card` includes additive `sequence`, `next_type`, `last_shown`, `sequence_error`,
+`session` and `pending_types` fields. Producers may use exact path receipts to
+release immutable snapshots, and session changes to detect lost pending work.
+The receipt means accepted by the renderer, not that the entire duration elapsed.
+
+No new timer is introduced. Keep weather's existing three-minute replenishment
+and 30-second duration. A recipe producer checks once a minute, replenishes a
+recipe turn once with a 45-second card, and does not impose a fifteen-minute
+display interval. Eight 20-second photos give card-start gaps of roughly 190
+and 205 seconds plus fades; videos and pauses lengthen them.
+
+Corrupt or changed persisted sequence state and persistence errors stop cards
+while leaving photos running. Review/repair the library state before resetting
+it. A crash between rendering and cursor persistence can lose the newest turn;
+there is no atomic transaction spanning pixels and disk. Configuration and
+service activation are manual; nothing in this patch enables a timer.

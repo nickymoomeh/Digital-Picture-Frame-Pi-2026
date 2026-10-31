@@ -37,6 +37,8 @@ import logging
 import math
 import os
 import time
+import threading
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +84,22 @@ class SlideshowController:
         self.card: dict | None = None
         self.photos_since_card = 0
         self._card_hold_at: float | None = None
+        self._card_sequence = None
+        self._card_sequence_lock = threading.Lock()
+        self._card_session = uuid.uuid4().hex
+
+    def _sequence(self):
+        if not self.config.slideshow.card_sequence:
+            return None
+        if self.config.slideshow.card_consecutive:
+            raise ValueError("card_sequence requires card_consecutive: false")
+        with self._card_sequence_lock:
+            if self._card_sequence is None:
+                from .cardsequence import CardSequence
+                self._card_sequence = CardSequence(self.config.slideshow.card_sequence, self.library)
+        if self._card_sequence.error:
+            raise ValueError(self._card_sequence.error)
+        return self._card_sequence
 
     def validate_card(self, payload: dict) -> dict:
         directory = self.config.slideshow.card_directory
@@ -104,6 +122,9 @@ class SlideshowController:
         name = payload.get("type", path.stem)
         if not isinstance(name, str) or not name.strip() or len(name) > 128:
             raise ValueError("card type must be a nonempty string of at most 128 characters")
+        policy = self._sequence()
+        if policy and name not in policy.sequence:
+            raise ValueError("card type is not in slideshow.card_sequence")
         with path.open("rb"):
             pass
         return {"path": str(path), "duration": float(duration), "type": name}
@@ -126,7 +147,17 @@ class SlideshowController:
             self._card_hold_at = None
 
     def card_state(self, now: float) -> dict:
+        extra = {}
+        if self.config.slideshow.card_sequence:
+            try:
+                extra = self._sequence().state()
+            except ValueError as exc:
+                extra = {"sequence": self.config.slideshow.card_sequence,
+                         "next_type": None, "last_shown": {}, "sequence_error": str(exc)}
         return {
+            **extra,
+            "session": self._card_session,
+            "pending_types": list(self.cards),
             "active": self.card is not None,
             "type": self.card["type"] if self.card else None,
             "remaining": self.next_change_in(now) if self.card else 0,
@@ -141,7 +172,15 @@ class SlideshowController:
                 or (self.card and not cfg.card_consecutive)
                 or (not self.card and self.photos_since_card < max(1, cfg.card_every))):
             return False
-        for name in list(self.cards):
+        try:
+            policy = self._sequence()
+        except ValueError as exc:
+            _log.error("card sequence stopped: %s", exc)
+            return False
+        names = [policy.next_type] if policy else list(self.cards)
+        for name in names:
+            if name not in self.cards:
+                continue
             candidate = self.cards.pop(name)
             try:
                 candidate = self.validate_card(candidate)
@@ -168,6 +207,13 @@ class SlideshowController:
             self._card_hold_at = None
             self.photos_since_card = 0
             self.renderer.set_overlay("info", None)
+            if policy:
+                try:
+                    policy.shown(name, candidate["path"])
+                except ValueError as exc:
+                    # This card is already on screen. Preserve its duration;
+                    # policy.error stops further cards while photos continue.
+                    _log.error("%s", exc)
             self.frame.mark_dirty()
             self.frame._publish()
             return True
