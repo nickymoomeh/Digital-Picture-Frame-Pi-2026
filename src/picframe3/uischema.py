@@ -63,6 +63,10 @@ SECTION_LABELS = {
 # --------------------------------------------------------------------------
 
 NOTES = {
+    "slideshow.card_directory": "Local card directory; empty disables cards. Set in local YAML only. Keep outside photo folders. See docs/CARDS.md.",
+    "slideshow.card_every": "Normal photo slides between queued cards (minimum one; default eight).",
+    "slideshow.card_sequence": "Optional strict card type order, e.g. weather then recipe. Empty keeps FIFO. Set in local YAML; requires card_consecutive false. Missing types wait while photos continue.",
+    "slideshow.card_consecutive": "Allow waiting cards consecutively; otherwise keep a photo gap between cards.",
     "display.backend": "`auto` uses the screen if there is one, otherwise renders offscreen.",
     "display.rotate": "0 or 180. For a quarter turn rotate in the kernel (`video=HDMI-A-1:1080x1920M@60,rotate=90`) so the Pi reports a portrait mode.",
     "display.device": "`/dev/dri/card1`. Empty takes the first card with a connected output.",
@@ -390,6 +394,8 @@ def check_path_setting(key: str, value: Any, config: Any = None) -> str | None:
     One helper for every surface -- the HTTP API, and MQTT through the app --
     so a path the web interface refuses cannot be smuggled in over the broker.
     """
+    if key in {"slideshow.card_directory", "slideshow.card_sequence"}:
+        return f"{key} must be configured in the local YAML file"
     if key not in PATH_KEYS:
         return None
     extra = config_roots(config)

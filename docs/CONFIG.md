@@ -38,6 +38,9 @@ Pacing and sequencing: how long each picture stays, how it changes, what comes n
 
 | key | type | default | |
 |---|---|---|---|
+| `card_directory` | string | *(empty)* | Local card directory; empty disables cards. Set in local YAML only. Keep outside photo folders. See docs/CARDS.md. |
+| `card_every` | integer | `8` | Normal photo slides between queued cards (minimum one; default eight). |
+| `card_consecutive` | boolean | `False` | Allow waiting cards consecutively; otherwise keep a photo gap between cards. |
 | `interval` | number | `180.0` | Seconds each picture stays on screen. |
 | `transition` | string | `'fade'` | Any name from `picframe3 transitions`, or `random`. |
 | `transition_time` | number | `2.5` | Seconds the change from one picture to the next takes. |

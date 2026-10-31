@@ -376,6 +376,7 @@ class PicFrame:
                 self._tick_overlays(now)
 
                 if (not self.paused and self.display_on
+                        and not self.renderer.in_transition
                         and now >= self._next_change_at):
                     await self._advance()
                     now = time.monotonic()
@@ -906,7 +907,12 @@ class PicFrame:
         payload = command.payload
         _log.debug("command %s %s (from %s)", action.value, payload, command.source)
 
-        if action is Action.NEXT:
+        if action is Action.QUEUE_CARD:
+            try:
+                self.slideshow.queue_card(payload)
+            except (OSError, ValueError) as exc:
+                _log.warning("cannot queue card: %s", exc)
+        elif action is Action.NEXT:
             await self._advance()
         elif action is Action.PREVIOUS:
             await self._advance(backwards=True)
@@ -918,7 +924,8 @@ class PicFrame:
             )
             if self.video is not None:
                 self.video.pause(self.paused)
-            if not self.paused:
+            self.slideshow.hold_card()
+            if not self.paused and not self.slideshow.card:
                 self._next_change_at = time.monotonic() + self.config.slideshow.interval
             if self.current:
                 self._build_info_overlay(self.current)
@@ -1475,6 +1482,7 @@ class PicFrame:
         if on == self.display_on:
             return
         self.display_on = on
+        self.slideshow.hold_card()
         handled = self.backend.set_power(on) if self.backend else False
         if not handled and self.backlight.available:
             self.backlight.set(self.config.display.brightness if on else 0.0)
@@ -1489,7 +1497,7 @@ class PicFrame:
             # hands the pause back to whoever else may be holding it: a frame
             # paused before the screen went off stays paused after it.
             self.video.pause(not on or self.paused)
-        if on:
+        if on and not self.slideshow.card:
             # The picture that was up gets a full interval, not the remainder
             # of one that ran out in the dark: whoever just switched the screen
             # on should get to look at it.
@@ -1696,6 +1704,7 @@ class PicFrame:
             can_shutdown=self.can_power_off(),
             library=self._library_stats(),
             removed=self._removed_summary(),
+            card=self.slideshow.card_state(now),
             current=self._current_payload(record),
             next_change_in=self._next_change_in(now),
             video=self._video_payload(),

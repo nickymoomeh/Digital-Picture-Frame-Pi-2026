@@ -143,7 +143,7 @@ function render(next) {
     currentId = null;
   }
 
-  $("#title").textContent = cur.title || cur.basename || "—";
+  $("#title").textContent = (state.card?.active ? `Information card: ${state.card.type}` : null) || cur.title || cur.basename || "—";
   const bits = [];
   if (cur.taken_at) bits.push(new Date(cur.taken_at * 1000).toLocaleDateString(undefined,
     { day: "numeric", month: "long", year: "numeric" }));
@@ -216,6 +216,8 @@ function render(next) {
     ["Round", `${fmt(state.playlist_round)} · ${fmt(state.playlist_remaining)} left`],
     ["Times shown", lib.shown_max === lib.shown_min
       ? fmt(lib.shown_min) : `${fmt(lib.shown_min)}–${fmt(lib.shown_max)}`],
+    ...(state.card?.active ? [["Information card", escapeHtml(state.card.type)]] : []),
+    ...(state.card?.pending ? [["Cards waiting", fmt(state.card.pending)]] : []),
     ["Next in", state.paused ? "paused" : `${Math.round(state.next_change_in || 0)}s`],
     ["Frame rate", `${state.fps ?? 0}/s`],
     ["Uptime", duration(state.uptime)],

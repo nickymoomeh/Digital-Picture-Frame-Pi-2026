@@ -60,6 +60,10 @@ class DisplayConfig:
 
 @dataclass
 class SlideshowConfig:
+    card_directory: str = ""              # empty disables local cards
+    card_every: int = 8                    # normal photo slides between cards
+    card_consecutive: bool = False
+    card_sequence: list[str] = field(default_factory=list)  # opt-in strict display order
     interval: float = 180.0               # seconds a picture stays up
     transition: str = "fade"              # or "random"
     transition_time: float = 2.5

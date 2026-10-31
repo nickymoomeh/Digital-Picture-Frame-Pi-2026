@@ -411,3 +411,7 @@ exists, it is scaled to the panel and drawn over the picture, beneath the
 caption and clock. Write a transparent PNG there from anything — a weather
 script, a calendar, a doorbell camera — and it appears within a second. Delete
 the file and it disappears.
+
+## Local information cards
+
+See [local information cards](CARDS.md) for `queue_card`, configuration, state fields and an atomic PNG generation example.

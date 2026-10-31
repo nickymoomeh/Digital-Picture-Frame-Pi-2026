@@ -26,6 +26,7 @@ class Action(StrEnum):
     PAUSE = "pause"
     RESUME = "resume"
     TOGGLE_PAUSE = "toggle_pause"
+    QUEUE_CARD = "queue_card"
     JUMP = "jump"                 # payload: {"id": int} or {"path": str}
     DELETE = "delete"             # move the current picture out of the library
     RESTORE = "restore"           # payload: {"stored_as": str} -- undo a removal
@@ -134,6 +135,7 @@ class State:
     #: taken out of the library and what the last one was.  Home Assistant
     #: and the web UI both read it from here rather than the file.
     removed: dict[str, Any] = field(default_factory=dict)
+    card: dict[str, Any] = field(default_factory=dict)
     current: dict[str, Any] = field(default_factory=dict)
     next_change_in: float = 0.0
     video: dict[str, Any] = field(default_factory=dict)
