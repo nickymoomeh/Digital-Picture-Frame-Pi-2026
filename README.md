@@ -228,3 +228,7 @@ beside it) so that the page needs nothing from the outside world.
 
 The design owes a great deal to Helge Erbe, Paddy Gaunt and Jeff Godfrey, whose
 work established what a good Pi picture frame does.
+
+## Local information cards
+
+See [local information cards](docs/CARDS.md) for `queue_card`, configuration, state fields and an atomic PNG generation example.

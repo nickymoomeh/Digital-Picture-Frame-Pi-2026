@@ -34,13 +34,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 from .gfx import Slide, Texture
 from .library.db import Record
 from .media import no_files_screen
+from .media.metadata import PhotoMeta
 from .media.prepare import TooLargeToDecode
 
 _log = logging.getLogger(__name__)
@@ -75,6 +78,100 @@ class SlideshowController:
         #: Held for the whole of an advance, including the load.  See the
         #: module docstring.
         self._lock = asyncio.Lock()
+        self.cards: dict[str, dict] = {}
+        self.card: dict | None = None
+        self.photos_since_card = 0
+        self._card_hold_at: float | None = None
+
+    def validate_card(self, payload: dict) -> dict:
+        directory = self.config.slideshow.card_directory
+        if not directory:
+            raise ValueError("configure slideshow.card_directory before queueing cards")
+        raw = payload.get("path")
+        if not isinstance(raw, str) or not Path(raw).is_absolute():
+            raise ValueError("card path must be an absolute local path")
+        root = Path(directory).expanduser().resolve(strict=True)
+        path = Path(raw).resolve(strict=True)
+        if not root.is_dir() or not path.is_relative_to(root) or not path.is_file():
+            raise ValueError("card must be a file inside slideshow.card_directory")
+        if path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+            raise ValueError("card must be a PNG, JPEG or WebP image")
+        duration = payload.get("duration", 30)
+        if isinstance(duration, bool) or not isinstance(duration, (int, float)):
+            raise ValueError("card duration must be a number")
+        if not math.isfinite(duration) or not 1 <= duration <= 3600:
+            raise ValueError("card duration must be between 1 and 3600 seconds")
+        name = payload.get("type", path.stem)
+        if not isinstance(name, str) or not name.strip() or len(name) > 128:
+            raise ValueError("card type must be a nonempty string of at most 128 characters")
+        with path.open("rb"):
+            pass
+        return {"path": str(path), "duration": float(duration), "type": name}
+
+    def queue_card(self, payload: dict) -> None:
+        card = self.validate_card(payload)
+        if card["type"] not in self.cards and len(self.cards) >= 64:
+            raise ValueError("card queue is full")
+        # Assigning an existing key preserves its fair position in the queue.
+        self.cards[card["type"]] = card
+        self.frame.mark_dirty()
+
+    def hold_card(self) -> None:
+        held = self.frame.paused or not self.frame.display_on
+        now = time.monotonic()
+        if self.card and held and self._card_hold_at is None:
+            self._card_hold_at = now
+        elif self._card_hold_at is not None and not held:
+            self.next_change_at += now - self._card_hold_at
+            self._card_hold_at = None
+
+    def card_state(self, now: float) -> dict:
+        return {
+            "active": self.card is not None,
+            "type": self.card["type"] if self.card else None,
+            "remaining": self.next_change_in(now) if self.card else 0,
+            "pending": len(self.cards),
+            "photos_until_next": max(0, max(1, self.config.slideshow.card_every)
+                                     - self.photos_since_card),
+        }
+
+    async def _try_card(self) -> bool:
+        cfg = self.config.slideshow
+        if (not self.cards or self.frame.paused or not self.frame.display_on
+                or (self.card and not cfg.card_consecutive)
+                or (not self.card and self.photos_since_card < max(1, cfg.card_every))):
+            return False
+        for name in list(self.cards):
+            candidate = self.cards.pop(name)
+            try:
+                candidate = self.validate_card(candidate)
+                # Deliberately bypass the photo prefetch: generators replace files.
+                prepared = await self.loader.load([PhotoMeta(path=candidate["path"])])
+                if prepared is None or prepared.is_video:
+                    continue
+                if self.frame.paused or not self.frame.display_on:
+                    self.cards = {name: candidate, **self.cards}
+                    return True
+                slide = Slide(Texture.from_image(prepared.image, srgb=True),
+                              fit="cover", duration=candidate["duration"])
+                self.stop_video()
+                self.renderer.show(slide, transition="fade", duration=cfg.transition_time)
+            except (OSError, ValueError, TooLargeToDecode) as exc:
+                _log.warning("skipping card %s: %s", name, exc)
+                continue
+            self.card = candidate
+            self.current = []
+            self.placeholder_shown = False
+            self.slide_started = time.monotonic()
+            # Give the fully faded-in card its requested reading time.
+            self.next_change_at = self.slide_started + cfg.transition_time + candidate["duration"]
+            self._card_hold_at = None
+            self.photos_since_card = 0
+            self.renderer.set_overlay("info", None)
+            self.frame.mark_dirty()
+            self.frame._publish()
+            return True
+        return False
 
     # -- the pieces that can change under us -------------------------------
     @property
@@ -103,6 +200,8 @@ class SlideshowController:
     async def advance(self, *, initial: bool = False, backwards: bool = False) -> None:
         """The next picture (or the previous one), prepared and put on screen."""
         async with self._lock:
+            if not initial and not backwards and await self._try_card():
+                return
             await self._advance_locked(initial=initial, backwards=backwards)
 
     async def _advance_locked(self, *, initial: bool, backwards: bool) -> None:
@@ -225,6 +324,9 @@ class SlideshowController:
         caption, the place name and the prefetch of whatever is next.
         """
         cfg = self.config
+        self.card = None
+        self._card_hold_at = None
+        self.photos_since_card += int(not any(r.is_video for r in group))
         self.placeholder_shown = False
         self.current = group
         self.current_fit = prepared.fit
@@ -259,6 +361,8 @@ class SlideshowController:
             self.loader.prefetch([r.as_meta() for r in upcoming])
 
     def _show_placeholder(self) -> None:
+        self.card = None
+        self._card_hold_at = None
         message, subtitle = self.frame.describe_empty()
         if self.placeholder_shown == (message, subtitle) or self.renderer is None:
             return
@@ -336,6 +440,8 @@ class SlideshowController:
         is pushed on every tick -- so reporting it verbatim would show a
         countdown stuck at 0.5.  What is left of the film is the honest answer.
         """
+        if self.card and self._card_hold_at is not None:
+            now = self._card_hold_at
         video = self.frame.video
         if self.video_playing():
             left = []

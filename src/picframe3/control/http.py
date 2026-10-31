@@ -1029,6 +1029,11 @@ class HttpServer:
                 "removing pictures over the network is switched off "
                 "(http.allow_delete). The frame's own buttons can still do it.",
             )
+        if command.action is Action.QUEUE_CARD:
+            try:
+                self.app.slideshow.validate_card(command.payload)
+            except (OSError, ValueError) as exc:
+                raise HTTPException(400, str(exc)) from exc
         if command.action is Action.SET_CONFIG:
             self._vet_setting(str(command.payload.get("key") or ""),
                               command.payload.get("value"))
